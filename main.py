@@ -32,7 +32,10 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 def load_pickle(name: str):
     path = os.path.join(MODEL_DIR, name)
     if not os.path.exists(path):
-        raise RuntimeError(f"Model file not found: {path}. Run train_and_save.py first.")
+        raise RuntimeError(
+            f"❌ Model file not found: {name}. "
+            f"Make sure /models folder is uploaded with .pkl files."
+        )
     with open(path, "rb") as f:
         return pickle.load(f)
 
