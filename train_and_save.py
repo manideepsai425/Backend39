@@ -60,8 +60,8 @@ df["season_encoded"] = le_season.transform(df["season"])
 # Lag features
 df = df.sort_values("date")
 
-df["demand_lag_1"] = df.groupby("crop_name")["demand_estimate"].shift(1)
-df["demand_lag_7"] = df.groupby("crop_name")["demand_estimate"].shift(7)
+df["demand_lag_1"] = df.groupby("crop_name")["demand_estimate"].shift(1).bfill()
+df["demand_lag_7"] = df.groupby("crop_name")["demand_estimate"].shift(7).bfill()
 
 df["avg_7day_demand"] = df.groupby("crop_name")["demand_estimate"].transform(lambda x: x.rolling(7,1).mean())
 df["avg_30day_demand"] = df.groupby("crop_name")["demand_estimate"].transform(lambda x: x.rolling(30,1).mean())
