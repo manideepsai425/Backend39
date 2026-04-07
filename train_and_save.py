@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore")
 
 # ── Config ─────────────────────────────────────────────
 BASE_DIR = os.path.dirname(__file__)
-CSV_PATH = os.path.join(BASE_DIR, "data", "cleaned_food_supply_chain_sourcetable.csv")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "cleaned_fixed.csv")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
 os.makedirs(MODEL_DIR, exist_ok=True)
