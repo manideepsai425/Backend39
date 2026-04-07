@@ -1,6 +1,5 @@
 # ============================================================
-#  🌾 Food Supply Chain AI — FastAPI Backend
-#  Wraps Demand, Spoilage Risk, and Supply Gap models
+#  🌾 Food Supply Chain AI — FastAPI Backend (FIXED)
 # ============================================================
 
 from fastapi import FastAPI, HTTPException
@@ -14,8 +13,8 @@ import os
 # ── App Setup ────────────────────────────────────────────────
 app = FastAPI(
     title="Food Supply Chain AI API",
-    description="Predict demand, spoilage risk, and supply gap for agricultural supply chains.",
-    version="1.0.0"
+    description="Predict demand, spoilage risk, and supply gap.",
+    version="1.0.1"
 )
 
 app.add_middleware(
@@ -26,27 +25,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Load Models ───────────────────────────────────────────────
+# ── Globals (loaded at startup) ──────────────────────────────
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 
+demand_model = None
+spoilage_model = None
+gap_model = None
+le_crop = None
+le_region = None
+le_season = None
+
+# ── Load Helper ──────────────────────────────────────────────
 def load_pickle(name: str):
     path = os.path.join(MODEL_DIR, name)
     if not os.path.exists(path):
         raise RuntimeError(
             f"❌ Model file not found: {name}. "
-            f"Make sure /models folder is uploaded with .pkl files."
+            f"Ensure /models folder is uploaded with all .pkl files."
         )
     with open(path, "rb") as f:
         return pickle.load(f)
 
-demand_model   = load_pickle("demand_model.pkl")
-spoilage_model = load_pickle("spoilage_model.pkl")
-gap_model      = load_pickle("gap_model.pkl")
-le_crop        = load_pickle("le_crop.pkl")
-le_region      = load_pickle("le_region.pkl")
-le_season      = load_pickle("le_season.pkl")
+# ── Startup Load ─────────────────────────────────────────────
+@app.on_event("startup")
+def load_models():
+    global demand_model, spoilage_model, gap_model
+    global le_crop, le_region, le_season
 
-# ── Feature column lists (must match training order) ─────────
+    demand_model   = load_pickle("demand_model.pkl")
+    spoilage_model = load_pickle("spoilage_model.pkl")
+    gap_model      = load_pickle("gap_model.pkl")
+    le_crop        = load_pickle("le_crop.pkl")
+    le_region      = load_pickle("le_region.pkl")
+    le_season      = load_pickle("le_season.pkl")
+
+# ── Feature columns ──────────────────────────────────────────
 DEMAND_FEATURES = [
     'day_of_week', 'month', 'quarter', 'is_weekend',
     'crop_encoded', 'region_encoded', 'season_encoded',
@@ -76,96 +89,79 @@ GAP_FEATURES = [
     'crop_yield', 'transport_cost', 'fuel_price'
 ]
 
-# ── Request Schema ────────────────────────────────────────────
+# ── Request Schema ───────────────────────────────────────────
 class PredictionRequest(BaseModel):
-    crop: str           = Field(..., example="Rice",
-                                description="One of: Rice, Potato, Turmeric, Tomato, Brinjal, Cabbage, Onion, Chilli, Maize, Wheat")
-    region: str         = Field(..., example="Telangana",
-                                description="One of: Andhra Pradesh, Telangana, Maharashtra, Tamil Nadu, Karnataka")
-    season: str         = Field(..., example="Kharif",
-                                description="One of: Summer, Kharif, Rabi")
-    month: int          = Field(..., ge=1, le=12, example=8)
-    day_of_week: int    = Field(..., ge=0, le=6, example=2,
-                                description="0=Monday … 6=Sunday")
-    is_weekend: int     = Field(..., ge=0, le=1, example=0)
-    weather_temp: float = Field(..., example=32.0)
-    rainfall_mm: float  = Field(..., example=45.0)
-    humidity_pct: float = Field(..., example=68.0)
-    festival_flag: int  = Field(..., ge=0, le=1, example=0)
-    holiday_flag: int   = Field(..., ge=0, le=1, example=0)
-    price_per_quintal: float = Field(..., example=12000.0)
-    fuel_price: float   = Field(..., example=100.0)
-    transport_cost: float = Field(..., example=400.0)
-    crop_yield: int     = Field(..., example=2500)
-    shelf_life_days: int = Field(..., example=30)
-    market_arrival: float = Field(..., example=500.0,
-                                  description="Market arrival quantity (supply proxy)")
-    demand_lag_1: float = Field(..., example=1200.0,
-                                description="Previous day's demand")
-    demand_lag_7: float = Field(..., example=1100.0,
-                                description="Demand 7 days ago")
-    avg_7day_demand: float  = Field(..., example=1150.0)
-    avg_30day_demand: float = Field(..., example=1080.0)
+    crop: str
+    region: str
+    season: str
+    month: int = Field(..., ge=1, le=12)
+    day_of_week: int = Field(..., ge=0, le=6)
+    is_weekend: int = Field(..., ge=0, le=1)
+    weather_temp: float
+    rainfall_mm: float
+    humidity_pct: float
+    festival_flag: int = Field(..., ge=0, le=1)
+    holiday_flag: int = Field(..., ge=0, le=1)
+    price_per_quintal: float
+    fuel_price: float
+    transport_cost: float
+    crop_yield: int
+    shelf_life_days: int
+    market_arrival: float
+    demand_lag_1: float
+    demand_lag_7: float
+    avg_7day_demand: float
+    avg_30day_demand: float
 
-
-# ── Response Schema ───────────────────────────────────────────
+# ── Response Schema ──────────────────────────────────────────
 class PredictionResponse(BaseModel):
     crop: str
     region: str
     season: str
     predicted_demand: float
     predicted_supply_gap: float
-    spoilage_risk_label: str       # "HIGH RISK" or "LOW RISK"
+    spoilage_risk_label: str
     spoilage_risk_probability: float
     alert: str
 
-
-# ── Helper ────────────────────────────────────────────────────
+# ── Helper ───────────────────────────────────────────────────
 def safe_encode(encoder, value: str, field_name: str):
     classes = list(encoder.classes_)
     if value not in classes:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid {field_name} '{value}'. Valid options: {classes}"
+            detail=f"Invalid {field_name}: {value}. Valid: {classes}"
         )
     return int(encoder.transform([value])[0])
 
-
-# ── Endpoints ─────────────────────────────────────────────────
+# ── Routes ───────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {
-        "message": "🌾 Food Supply Chain AI API is running.",
-        "docs": "/docs",
-        "predict": "/predict"
-    }
-
+    return {"message": "🌾 API running", "docs": "/docs"}
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
 @app.get("/options")
 def get_options():
-    """Return valid categorical options for the predict form."""
     return {
-        "crops":   list(le_crop.classes_),
+        "crops": list(le_crop.classes_),
         "regions": list(le_region.classes_),
-        "seasons": list(le_season.classes_),
+        "seasons": list(le_season.classes_)
     }
-
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict(req: PredictionRequest):
-    # Encode categoricals
-    crop_enc   = safe_encode(le_crop,   req.crop,   "crop")
+
+    # Encode
+    crop_enc   = safe_encode(le_crop, req.crop, "crop")
     region_enc = safe_encode(le_region, req.region, "region")
     season_enc = safe_encode(le_season, req.season, "season")
-    quarter    = (req.month - 1) // 3 + 1
+    quarter = (req.month - 1) // 3 + 1
 
-    # Build DataFrames
-    demand_input = pd.DataFrame([[
+    # Inputs
+    demand_input = pd.DataFrame([[ 
         req.day_of_week, req.month, quarter, req.is_weekend,
         crop_enc, region_enc, season_enc,
         req.shelf_life_days,
@@ -175,7 +171,7 @@ def predict(req: PredictionRequest):
         req.demand_lag_1, req.demand_lag_7, req.avg_7day_demand, req.avg_30day_demand
     ]], columns=DEMAND_FEATURES)
 
-    spoi_input = pd.DataFrame([[
+    spoi_input = pd.DataFrame([[ 
         req.day_of_week, req.month, req.is_weekend,
         crop_enc, region_enc, season_enc,
         req.shelf_life_days,
@@ -185,7 +181,7 @@ def predict(req: PredictionRequest):
         req.demand_lag_1
     ]], columns=SPOILAGE_FEATURES)
 
-    gap_input = pd.DataFrame([[
+    gap_input = pd.DataFrame([[ 
         req.day_of_week, req.month, quarter,
         crop_enc, region_enc, season_enc,
         req.market_arrival, req.demand_lag_1,
@@ -197,14 +193,18 @@ def predict(req: PredictionRequest):
     # Predictions
     pred_demand = float(demand_model.predict(demand_input)[0])
     pred_risk   = int(spoilage_model.predict(spoi_input)[0])
-    pred_risk_p = float(spoilage_model.predict_proba(spoi_input)[0][1])
-    pred_gap    = float(gap_model.predict(gap_input)[0])
 
-    # Alert message
-    if pred_gap < 0:
-        alert = f"⚠️ Shortage of {abs(pred_gap):.0f} units expected!"
-    else:
-        alert = f"✅ Supply OK. Surplus: {pred_gap:.0f} units"
+    # ✅ SAFE FIX HERE
+    pred_risk_p = float(spoilage_model.predict_proba(spoi_input)[0][1]) if hasattr(spoilage_model, "predict_proba") else 0.0
+
+    pred_gap = float(gap_model.predict(gap_input)[0])
+
+    # Alert
+    alert = (
+        f"⚠️ Shortage of {abs(pred_gap):.0f} units expected!"
+        if pred_gap < 0
+        else f"✅ Supply OK. Surplus: {pred_gap:.0f} units"
+    )
 
     return PredictionResponse(
         crop=req.crop,
